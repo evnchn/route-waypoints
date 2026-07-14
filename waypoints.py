@@ -1,3 +1,9 @@
+import numpy
+from collections import defaultdict
+import urllib.request
+import subprocess
+import shlex
+import csv
 import datetime
 from zoneinfo import ZoneInfo
 import requests
@@ -108,13 +114,6 @@ for file in glob.glob(r'./ferry/*.json'):
 # tagging (bus=private @ franchised, highway=service) and a station-move
 # penalty override — see the "HONG KONG" comments inside the file.
 
-import csv
-import shlex
-import subprocess
-import urllib.request
-from collections import defaultdict
-
-import numpy
 
 GTFS_URL = "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip"
 OSM_URL = "https://download.geofabrik.de/asia/china/hong-kong-latest.osm.pbf"
@@ -124,7 +123,8 @@ GATE_M = 100.0
 
 def refine_franchised_bus_lines():
     with TemporaryDirectory(ignore_cleanup_errors=True) as work:
-        for url, path in ((OSM_URL, f"{work}/hong-kong.osm.pbf"), (GTFS_URL, f"{work}/gtfs.zip")):
+        for url, path in (
+                (OSM_URL, f"{work}/hong-kong.osm.pbf"), (GTFS_URL, f"{work}/gtfs.zip")):
             logging.info(f"Fetching {url}")
             with urllib.request.urlopen(url, timeout=300) as r, open(path, "wb") as f:
                 shutil.copyfileobj(r, f)
@@ -143,15 +143,21 @@ def refine_franchised_bus_lines():
             if r.get("route_type") != "3" or r.get("agency_id") == "GMB":
                 continue
             # trip_id is "<route_id>-<seq>-..."; seq 1 = outbound, 2 = inbound
-            seq = t["trip_id"][len(rid) + 1:].split("-")[0] if t["trip_id"].startswith(rid + "-") else ""
+            seq = t["trip_id"][len(
+                rid) + 1:].split("-")[0] if t["trip_id"].startswith(rid + "-") else ""
             if seq in ("1", "2"):
                 kept.setdefault((rid, seq), t["trip_id"])
         rep = set(kept.values())
-        stops = {s["stop_id"]: (float(s["stop_lon"]), float(s["stop_lat"])) for s in rd("stops.txt")}
+        stops = {
+            s["stop_id"]: (
+                float(
+                    s["stop_lon"]), float(
+                    s["stop_lat"])) for s in rd("stops.txt")}
         seqs = defaultdict(list)
         for s in rd("stop_times.txt"):
             if s["trip_id"] in rep:
-                seqs[s["trip_id"]].append((int(s["stop_sequence"]), s["stop_id"]))
+                seqs[s["trip_id"]].append(
+                    (int(s["stop_sequence"]), s["stop_id"]))
 
         os.makedirs(f"{work}/gtfs")
 
@@ -162,33 +168,74 @@ def refine_franchised_bus_lines():
                 w.writerows(rows)
         wr("agency.txt", ["agency_id", "agency_name", "agency_url", "agency_timezone"],
            [["HK", "HK", "https://hkbus.app", "Asia/Hong_Kong"]])
-        wr("routes.txt", ["route_id", "agency_id", "route_short_name", "route_type"],
-           [[rid, "HK", routes[rid].get("route_short_name", rid), "3"] for rid in {r for r, _ in kept}])
+        wr("routes.txt", ["route_id", "agency_id", "route_short_name", "route_type"], [
+           [rid, "HK", routes[rid].get("route_short_name", rid), "3"] for rid in {r for r, _ in kept}])
         wr("trips.txt", ["route_id", "service_id", "trip_id"],
            [[rid, "D", tid] for (rid, _), tid in kept.items()])
-        wr("stop_times.txt", ["trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence"],
-           [[tid, "", "", sid, i] for tid in rep for i, sid in sorted(seqs[tid])])
+        wr("stop_times.txt",
+           ["trip_id",
+            "arrival_time",
+            "departure_time",
+            "stop_id",
+            "stop_sequence"],
+            [[tid,
+              "",
+              "",
+              sid,
+              i] for tid in rep for i,
+             sid in sorted(seqs[tid])])
         wr("stops.txt", ["stop_id", "stop_name", "stop_lat", "stop_lon"],
            [[sid, sid, xy[1], xy[0]] for sid, xy in stops.items()])
-        wr("calendar.txt", ["service_id", "monday", "tuesday", "wednesday", "thursday", "friday",
-                            "saturday", "sunday", "start_date", "end_date"],
-           [["D", 1, 1, 1, 1, 1, 1, 1, "20260101", "20261231"]])
+        wr("calendar.txt",
+           ["service_id",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+            "start_date",
+            "end_date"],
+            [["D",
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              "20260101",
+              "20261231"]])
 
         shutil.copy("pfaedle.cfg", f"{work}/pfaedle.cfg")
-        cmd = os.environ.get("PFAEDLE_CMD")  # set to a native binary to skip Docker
-        base = shlex.split(cmd) if cmd else ["docker", "run", "--rm",
-                                        "--user", f"{os.getuid()}:{os.getgid()}",
-                                        "-v", f"{work}:/data", PFAEDLE_IMAGE]
+        # set to a native binary to skip Docker
+        cmd = os.environ.get("PFAEDLE_CMD")
+        base = shlex.split(cmd) if cmd else [
+            "docker",
+            "run",
+            "--rm",
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
+            "-v",
+            f"{work}:/data",
+            PFAEDLE_IMAGE]
         prefix = "/data" if not cmd else work
         logging.info("Running pfaedle")
-        subprocess.run(base + ["-c", f"{prefix}/pfaedle.cfg", "-x", f"{prefix}/hong-kong.osm.pbf",
-                               "-o", f"{prefix}/out", f"{prefix}/gtfs"], check=True)
+        subprocess.run(base + ["-c",
+                               f"{prefix}/pfaedle.cfg",
+                               "-x",
+                               f"{prefix}/hong-kong.osm.pbf",
+                               "-o",
+                               f"{prefix}/out",
+                               f"{prefix}/gtfs"],
+                       check=True)
 
         shapes = defaultdict(list)
         with open(f"{work}/out/shapes.txt", encoding="utf-8") as f:
             for row in csv.DictReader(f):
-                shapes[row["shape_id"]].append(
-                    (int(row["shape_pt_sequence"]), float(row["shape_pt_lon"]), float(row["shape_pt_lat"])))
+                shapes[row["shape_id"]].append((int(row["shape_pt_sequence"]), float(
+                    row["shape_pt_lon"]), float(row["shape_pt_lat"])))
         trip_shape = {}
         with open(f"{work}/out/trips.txt", encoding="utf-8") as f:
             for row in csv.DictReader(f):
@@ -206,7 +253,8 @@ def refine_franchised_bus_lines():
         worst = 0.0
         for q in p:
             t = numpy.clip(((q - a) * ab).sum(1) / ab2, 0, 1)
-            worst = max(worst, float(numpy.hypot(*(q - (a + t[:, None] * ab)).T).min()))
+            worst = max(worst, float(numpy.hypot(
+                *(q - (a + t[:, None] * ab)).T).min()))
         return worst
 
     refined = gated = unmatched = 0
@@ -216,20 +264,41 @@ def refine_franchised_bus_lines():
             unmatched += 1
             continue
         coords = [[lon, lat] for _, lon, lat in sorted(shapes[sid])]
-        pts = numpy.array([stops[x] for _, x in sorted(seqs[tid]) if x in stops], dtype=float)
-        if len(pts) < 2 or len(coords) < 2 or max_stop_distance(pts, numpy.array(coords, dtype=float)) > GATE_M:
+        pts = numpy.array([stops[x] for _, x in sorted(
+            seqs[tid]) if x in stops], dtype=float)
+        if len(pts) < 2 or len(coords) < 2 or max_stop_distance(
+                pts, numpy.array(coords, dtype=float)) > GATE_M:
             gated += 1  # keep the CSDI line for this route
             continue
-        feature = {"type": "Feature",
-                   "properties": {"ROUTE_ID": rid, "ROUTE_SEQ": int(seq), "SOURCE": "pfaedle-osm"},
-                   "geometry": {"type": "LineString", "coordinates": coords}}
+        feature = {
+            "type": "Feature",
+            "properties": {
+                "ROUTE_ID": rid,
+                "ROUTE_SEQ": int(seq),
+                "SOURCE": "pfaedle-osm"},
+            "geometry": {
+                "type": "LineString",
+                "coordinates": coords}}
         with open(f"waypoints/{rid}-{'O' if seq == '1' else 'I'}.json", "w", encoding="utf-8") as f:
-            f.write(re.sub(r"([0-9]+\.[0-9]{5})[0-9]+", r"\1",
-                           json.dumps({"features": [feature], "type": "FeatureCollection"},
-                                      ensure_ascii=False, separators=(",", ":"))))
+            f.write(
+                re.sub(
+                    r"([0-9]+\.[0-9]{5})[0-9]+",
+                    r"\1",
+                    json.dumps(
+                        {
+                            "features": [feature],
+                            "type": "FeatureCollection"},
+                        ensure_ascii=False,
+                        separators=(
+                            ",",
+                            ":"))))
         refined += 1
-    logging.info(f"pfaedle refinement: {refined} replaced, {gated} kept CSDI (gate), {unmatched} unmatched")
-    store_version("bus-refined", datetime.datetime.now(ZoneInfo("Asia/Hong_Kong")).isoformat())
+    logging.info(
+        f"pfaedle refinement: {refined} replaced, {gated} kept CSDI (gate), {unmatched} unmatched")
+    store_version(
+        "bus-refined",
+        datetime.datetime.now(
+            ZoneInfo("Asia/Hong_Kong")).isoformat())
 
 
 # A refinement failure fails the whole crawl: the deploy step is skipped and
