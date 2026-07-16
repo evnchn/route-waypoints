@@ -103,7 +103,7 @@ def fetch_direction_index():
                         (bound, loc["lat"], loc["lng"]))
         logging.info(
             f"Fetched direction index for {
-                len(index)} (route, co) pairs")
+                len(index)}(route, co) pairs")
     except Exception as e:
         logging.warning(
             f"routeFareList fetch failed; O/I falls back to ROUTE_SEQ: {e}")
