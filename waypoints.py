@@ -89,9 +89,13 @@ for csdi_dataset in [
 
 
 logging.info(
-    "Removing accidental Central Kowloon Route detours (see ckr_patch.json)")
-with open('ckr_patch.json', encoding='utf-8') as f:
-    ckr_patches = json.load(f)
+    "Removing accidental CSDI phantom detours (see *_patch.json)")
+ckr_patches = {}
+patch_files = ['ckr_patch.json', 'fanling_patch.json', 'kaitak_patch.json']
+for patch_file in patch_files:
+    with open(patch_file, encoding='utf-8') as f:
+        for name, patch in json.load(f).items():
+            ckr_patches.setdefault(name, []).append(patch)
 
 
 def ckr_find(coords, seq, from_end):
@@ -110,7 +114,7 @@ def ckr_length(coords):
                for i in range(len(coords) - 1))
 
 
-for name, patch in ckr_patches.items():
+for name, patchlist in ckr_patches.items():
     path = "waypoints/" + name + ".json"
     with open(path, encoding='utf-8') as f:
         data = json.load(f)
@@ -120,31 +124,41 @@ for name, patch in ckr_patches.items():
              ] if geometry["type"] == "LineString" else geometry["coordinates"]
     coords = [c for part in parts for c in part]
     safe = (str(properties.get("ROUTE_ID")) == name.split("-")[0]
-            and properties.get("ROUTE_NAMEE") == patch["route"]
             and all(math.hypot((b[0][0] - a[-1][0]) * 102730, (b[0][1] - a[-1][1]) * 110852) < 100
                     for a, b in zip(parts, parts[1:])))
-    i0 = ckr_find(coords, patch["start_seq"], False) if safe else None
-    i1 = ckr_find(coords, patch["end_seq"], True) if safe else None
-    # witness: the detour must still pass through the CKR tunnel bore,
-    # somewhere a surface bus route can never legitimately be
-    imid = ckr_find(coords, patch["mid_seq"], False) if safe else None
-    end = None if i1 is None else i1 + len(patch["end_seq"]) - 1
-    run_m = 0 if i0 is None or end is None else ckr_length(coords[i0:end + 1])
-    if (i0 is None or end is None or imid is None or not i0 < imid < end
-            or run_m < patch["min_m"]):
+    changed = False
+    # a file may carry more than one detour (e.g. 373-I has both a Fanling and a
+    # Kai Tak one); re-anchor against the current coords so a prior cut's index
+    # shift can't invalidate the next
+    for patch in patchlist:
+        ok = safe and properties.get("ROUTE_NAMEE") == patch["route"]
+        i0 = ckr_find(coords, patch["start_seq"], False) if ok else None
+        i1 = ckr_find(coords, patch["end_seq"], True) if ok else None
+        # witness: a vertex that must survive strictly inside the run (CKR: the
+        # tunnel bore, never legitimate; Fanling/Kai Tak: the weaker run
+        # middle)
+        imid = ckr_find(coords, patch["mid_seq"], False) if ok else None
+        end = None if i1 is None else i1 + len(patch["end_seq"]) - 1
+        run_m = 0 if i0 is None or end is None else ckr_length(
+            coords[i0:end + 1])
+        if (i0 is None or end is None or imid is None or not i0 < imid < end
+                or run_m < patch["min_m"]):
+            logging.info(
+                f"{name} ({patch['route']}): no accidental detour present, patch skipped")
+            continue
+        len_before = ckr_length(coords)
+        del coords[i0 + 1:end]
+        if isinstance(properties.get("Shape_Length"),
+                      (int, float)) and len_before > 0:
+            properties["Shape_Length"] = round(
+                properties["Shape_Length"] * ckr_length(coords) / len_before, 4)
+        changed = True
         logging.info(
-            f"{name} ({patch['route']}): no accidental CKR detour present, patch skipped")
+            f"{name} ({patch['route']}): removed {run_m / 1000:.1f} km detour")
+    if not changed:
         continue
-    len_before = ckr_length(coords)
-    del coords[i0 + 1:end]
-    if isinstance(properties.get("Shape_Length"),
-                  (int, float)) and len_before > 0:
-        properties["Shape_Length"] = round(
-            properties["Shape_Length"] * ckr_length(coords) / len_before, 4)
     geometry["type"] = "MultiLineString"
     geometry["coordinates"] = [coords]
-    logging.info(
-        f"{name} ({patch['route']}): removed {run_m / 1000:.1f} km accidental CKR detour")
     with open(path, "w", encoding='utf-8') as f:
         f.write(
             re.sub(
