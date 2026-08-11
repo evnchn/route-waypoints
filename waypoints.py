@@ -90,7 +90,8 @@ def fetch_direction_index():
             gtfs_id = v.get("gtfsId")
             if not gtfs_id:
                 continue
-            for co in v.get("co", []):
+            # only co[0]: the app keys on bound[co[0]], not any joint operator
+            for co in v.get("co", [])[:1]:
                 bound = v.get("bound", {}).get(co)
                 stops_co = v.get("stops", {}).get(co)
                 loc = stop_list.get(stops_co[0], {}).get(
